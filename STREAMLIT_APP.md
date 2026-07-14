@@ -17,7 +17,7 @@ The app includes:
 
 ## Data Sources
 
-The bundled demo catalog works immediately.
+The bundled demo catalog works immediately, but it is only for UI testing. It uses a small synthetic catalog, so it cannot produce production-quality classification for arbitrary real product photos.
 
 For the original Kaggle fashion dataset workflow, choose **Custom dataset** in the sidebar and provide:
 
@@ -28,4 +28,11 @@ For the original Kaggle fashion dataset workflow, choose **Custom dataset** in t
 
 No external API keys are required.
 
-The CLIP + BLIP toggle runs local Hugging Face models through `torch` and `transformers`. The first run may need internet access to download model weights unless they are already cached locally.
+The CLIP + BLIP toggle uses local Hugging Face model weights through `torch` and `transformers`. The app intentionally checks the local cache only so Streamlit does not appear frozen while downloading large model files.
+
+For best accuracy:
+
+1. Use the real fashion catalog dataset, not the bundled demo catalog.
+2. Cache `openai/clip-vit-base-patch32` locally for visual/text search.
+3. Cache `Salesforce/blip-image-captioning-base` locally if generated descriptions are needed.
+4. Increase the custom catalog indexing limit after confirming the app runs on a smaller subset.

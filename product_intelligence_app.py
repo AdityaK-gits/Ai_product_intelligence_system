@@ -144,7 +144,11 @@ def draw_gallery(engine: ProductIntelligenceEngine, frame: pd.DataFrame) -> None
 
 with st.sidebar:
     st.header("Catalog Controls")
-    use_models = st.toggle("Use CLIP + BLIP models", value=False, help="Requires transformers, torch, and locally available model weights.")
+    use_models = st.toggle(
+        "Use cached CLIP + BLIP models",
+        value=False,
+        help="Loads locally cached Hugging Face weights only. This avoids long downloads during Streamlit reruns.",
+    )
     source = st.radio("Data source", ["Demo catalog", "Custom dataset"], horizontal=False)
     styles_csv = ""
     image_dir = ""
@@ -157,9 +161,19 @@ with st.sidebar:
     cluster_count = st.slider("Representative catalog size", min_value=3, max_value=10, value=5)
     st.caption("Custom mode expects the notebook dataset structure: styles.csv and an images directory of product jpgs.")
 
-engine = load_engine(use_models, source, styles_csv, image_dir, int(row_limit))
+with st.spinner("Preparing catalog and model features..."):
+    engine = load_engine(use_models, source, styles_csv, image_dir, int(row_limit))
+
+with st.sidebar:
+    if use_models and not engine.model_available:
+        st.warning("CLIP/BLIP weights are not cached locally, so the app is using the fast fallback.")
+    else:
+        st.caption(engine.model_message)
+
 if source == "Custom dataset" and (not styles_csv or not image_dir or engine.catalog.equals(build_demo_catalog())):
     st.warning("Custom dataset paths are missing or invalid, so the app is showing the bundled demo catalog.")
+elif source == "Demo catalog":
+    st.info("Demo catalog mode is for UI testing. Use your real product image folder and styles.csv for meaningful accuracy.")
 
 st.markdown('<div class="app-title">AI Product Intelligence Workbench</div>', unsafe_allow_html=True)
 st.markdown(

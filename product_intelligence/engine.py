@@ -65,24 +65,45 @@ class OptionalVisionModels:
     cached locally, users can enable model-backed captions and embeddings.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, local_files_only: bool = True) -> None:
         self.available = False
+        self.caption_available = False
         self.error: str | None = None
         try:
             import torch
-            from transformers import BlipForConditionalGeneration, BlipProcessor, CLIPModel, CLIPProcessor
+            from transformers import CLIPModel, CLIPProcessor
 
             self.torch = torch
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-            self.blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-            self.blip_model = BlipForConditionalGeneration.from_pretrained(
-                "Salesforce/blip-image-captioning-base"
+            self.clip_model = CLIPModel.from_pretrained(
+                "openai/clip-vit-base-patch32",
+                local_files_only=local_files_only,
             ).to(self.device)
+            self.clip_processor = CLIPProcessor.from_pretrained(
+                "openai/clip-vit-base-patch32",
+                local_files_only=local_files_only,
+            )
             self.available = True
         except Exception as exc:  # pragma: no cover - depends on optional local model cache
-            self.error = str(exc)
+            self.error = f"CLIP unavailable: {exc}"
+
+        if not self.available:
+            return
+
+        try:
+            from transformers import BlipForConditionalGeneration, BlipProcessor
+
+            self.blip_processor = BlipProcessor.from_pretrained(
+                "Salesforce/blip-image-captioning-base",
+                local_files_only=local_files_only,
+            )
+            self.blip_model = BlipForConditionalGeneration.from_pretrained(
+                "Salesforce/blip-image-captioning-base",
+                local_files_only=local_files_only,
+            ).to(self.device)
+            self.caption_available = True
+        except Exception as exc:  # pragma: no cover - depends on optional local model cache
+            self.error = f"{self.error or ''} BLIP captions unavailable: {exc}".strip()
 
     def image_embedding(self, image: Image.Image) -> np.ndarray:
         if not self.available:
@@ -95,12 +116,36 @@ class OptionalVisionModels:
         return vector / norm if norm else vector
 
     def caption(self, image: Image.Image) -> str | None:
-        if not self.available:
+        if not self.caption_available:
             return None
         inputs = self.blip_processor(image.convert("RGB"), return_tensors="pt").to(self.device)
         with self.torch.no_grad():
             output = self.blip_model.generate(**inputs, max_new_tokens=32)
         return self.blip_processor.decode(output[0], skip_special_tokens=True)
+
+    def text_embedding(self, text: str) -> np.ndarray | None:
+        if not self.available:
+            return None
+        inputs = self.clip_processor(text=[text], return_tensors="pt", padding=True).to(self.device)
+        with self.torch.no_grad():
+            features = self.clip_model.get_text_features(**inputs)
+        vector = features.cpu().numpy()[0].astype(np.float32)
+        norm = np.linalg.norm(vector)
+        return vector / norm if norm else vector
+
+    def zero_shot_scores(self, image: Image.Image, labels: list[str]) -> np.ndarray | None:
+        if not self.available:
+            return None
+        prompts = [f"a product photo of {label}" for label in labels]
+        inputs = self.clip_processor(
+            text=prompts,
+            images=[image.convert("RGB")],
+            return_tensors="pt",
+            padding=True,
+        ).to(self.device)
+        with self.torch.no_grad():
+            outputs = self.clip_model(**inputs)
+        return outputs.logits_per_image.softmax(dim=1).cpu().numpy()[0]
 
 
 class ProductIntelligenceEngine:
@@ -108,6 +153,19 @@ class ProductIntelligenceEngine:
         self.catalog = catalog.copy().reset_index(drop=True)
         self.models = OptionalVisionModels() if use_optional_models else None
         self._prepare_catalog()
+
+    @property
+    def model_available(self) -> bool:
+        return bool(self.models and self.models.available)
+
+    @property
+    def model_message(self) -> str:
+        if not self.models:
+            return "Using fast local fallback features."
+        if self.models.available:
+            caption_state = "BLIP captions enabled" if self.models.caption_available else "BLIP captions not cached"
+            return f"CLIP enabled on {self.models.device}; {caption_state}."
+        return self.models.error or "Optional vision models are unavailable."
 
     @classmethod
     def from_csv(
@@ -179,12 +237,27 @@ class ProductIntelligenceEngine:
         best_idx = int(np.argmax(similarities))
         best = self.catalog.iloc[best_idx]
         dominant = color_name(tuple((np.asarray(image.resize((1, 1))).reshape(3)).tolist()))
+        category = str(best.get("masterCategory", "Unknown"))
+        subcategory = str(best.get("subCategory", "Unknown"))
+        article_type = str(best.get("articleType", "Unknown"))
+        if self.model_available:
+            category_labels = sorted(self.catalog["masterCategory"].dropna().astype(str).unique().tolist())
+            article_labels = sorted(self.catalog["articleType"].dropna().astype(str).unique().tolist())
+            category_scores = self.models.zero_shot_scores(image, category_labels) if category_labels else None
+            article_scores = self.models.zero_shot_scores(image, article_labels) if article_labels else None
+            if category_scores is not None:
+                category = category_labels[int(np.argmax(category_scores))]
+            if article_scores is not None:
+                article_type = article_labels[int(np.argmax(article_scores))]
+                match = self.catalog[self.catalog["articleType"].astype(str) == article_type]
+                if not match.empty:
+                    subcategory = str(match.iloc[0].get("subCategory", subcategory))
         caption = self.models.caption(image) if self.models else None
         description = caption or f"{dominant.title()} product visually closest to {best.get('name', best.get('articleType', 'catalog item'))}."
         return AnalysisResult(
-            category=str(best.get("masterCategory", "Unknown")),
-            subcategory=str(best.get("subCategory", "Unknown")),
-            article_type=str(best.get("articleType", "Unknown")),
+            category=category,
+            subcategory=subcategory,
+            article_type=article_type,
             description=description,
             confidence=float(np.clip(similarities[best_idx], 0.0, 1.0)),
             dominant_color=dominant,
@@ -198,6 +271,11 @@ class ProductIntelligenceEngine:
         if not query.strip() or self.catalog.empty:
             return self.catalog.head(top_k).copy()
         text_scores = cosine_similarity(self.vectorizer.transform([query]), self.text_matrix)[0]
+        if self.model_available:
+            query_embedding = self.models.text_embedding(query)
+            if query_embedding is not None and query_embedding.shape[0] == self.embeddings.shape[1]:
+                clip_scores = cosine_similarity([query_embedding], self.embeddings)[0]
+                text_scores = (0.35 * text_scores) + (0.65 * clip_scores)
         query_tokens = set(query.lower().split())
         color_bonus = np.array([0.08 if any(token in self._row_text(row).lower() for token in query_tokens) else 0.0 for _, row in self.catalog.iterrows()])
         scores = text_scores + color_bonus
