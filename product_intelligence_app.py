@@ -182,7 +182,7 @@ with st.sidebar:
         help="Use Gemini for Google AI Studio keys, GroqCloud for gsk_ keys, and xAI Grok for xAI console keys.",
     )
     provider_defaults = {
-        "Gemini": ("GEMINI_API_KEY", "Gemini API key", "gemini-3.5-flash"),
+        "Gemini": ("GEMINI_API_KEY", "Gemini API key", "gemini-1.5-flash"),
         "GroqCloud": ("GROQ_API_KEY", "GroqCloud API key", "meta-llama/llama-4-scout-17b-16e-instruct"),
         "xAI Grok": ("XAI_API_KEY", "xAI API key", "grok-4.5"),
     }
@@ -269,7 +269,7 @@ with tabs[0]:
                 gemini_model = (
                     requested_model
                     if requested_model and requested_model.startswith("gemini-")
-                    else "gemini-3.5-flash"
+                    else "gemini-1.5-flash"
                 )
                 try:
                     if effective_provider == "Gemini":

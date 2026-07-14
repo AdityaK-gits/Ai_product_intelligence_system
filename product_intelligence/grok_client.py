@@ -3,9 +3,13 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+from io import BytesIO
+from urllib.parse import quote
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+
+from PIL import Image
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,14 @@ def _json_from_text(text: str) -> dict:
     if start >= 0 and end > start:
         cleaned = cleaned[start : end + 1]
     return json.loads(cleaned)
+
+
+def _compressed_jpeg_base64(image_bytes: bytes, *, max_size: int = 1024, quality: int = 82) -> str:
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    image.thumbnail((max_size, max_size))
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=quality, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def analyze_product_image_with_grok(
@@ -178,12 +190,11 @@ def analyze_product_image_with_gemini(
     image_bytes: bytes,
     *,
     api_key: str,
-    model: str = "gemini-3.5-flash",
+    model: str = "gemini-1.5-flash",
     filename: str = "product.jpg",
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 25,
 ) -> GrokVisionResult:
-    mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
-    encoded = base64.b64encode(image_bytes).decode("ascii")
+    encoded = _compressed_jpeg_base64(image_bytes)
     prompt = (
         "Analyze this uploaded image for an ecommerce product intelligence UI. "
         "If the image is not actually a product photo, say what it is instead. "
@@ -192,25 +203,23 @@ def analyze_product_image_with_gemini(
         "grounded only in visible image details. Confidence must be a number from 0 to 1."
     )
     body = {
-        "model": model,
-        "input": [
-            {"type": "text", "text": prompt},
+        "contents": [
             {
-                "type": "image",
-                "data": encoded,
-                "mime_type": mime_type,
-            },
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": encoded}},
+                ]
+            }
         ],
-        "response_format": {
-            "type": "text",
-            "mime_type": "application/json",
-        },
+        "generationConfig": {
+            "temperature": 0.1,
+            "response_mime_type": "application/json",
+        }
     }
     request = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{quote(model, safe='')}:generateContent?key={quote(api_key, safe='')}",
         data=json.dumps(body).encode("utf-8"),
         headers={
-            "x-goog-api-key": api_key,
             "Content-Type": "application/json",
         },
         method="POST",
@@ -224,15 +233,14 @@ def analyze_product_image_with_gemini(
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
 
-    text = payload.get("output_text", "")
-    if not text:
-        for item in payload.get("output", []):
-            for content in item.get("content", []):
-                if isinstance(content.get("text"), str):
-                    text = content["text"]
-                    break
-            if text:
+    text = ""
+    for candidate in payload.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            if isinstance(part.get("text"), str):
+                text = part["text"]
                 break
+        if text:
+            break
     if not text:
         raise RuntimeError("Gemini API returned no text output.")
     parsed = _json_from_text(text)
