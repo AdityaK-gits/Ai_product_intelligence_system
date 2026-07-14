@@ -197,6 +197,10 @@ with st.sidebar:
         disabled=not use_grok,
         help=f"For Streamlit Cloud, set {secret_name} in app secrets instead of typing it each run.",
     )
+    if use_grok and grok_api_key.strip().startswith("gsk_") and api_provider != "GroqCloud":
+        st.warning("This looks like a GroqCloud key. The app will route it to GroqCloud automatically.")
+    if use_grok and api_provider == "GroqCloud" and grok_model.strip().startswith("grok-"):
+        st.warning("GroqCloud does not use grok-* model names. The app will use the GroqCloud vision model automatically.")
 
 with st.spinner("Preparing catalog and model features..."):
     engine = load_engine(use_models, source, styles_csv, image_dir, int(row_limit))
@@ -247,19 +251,28 @@ with tabs[0]:
         if uploaded:
             start = time.perf_counter()
             grok_error = None
+            effective_provider = api_provider
             if use_grok and grok_api_key.strip():
+                api_key = grok_api_key.strip()
+                effective_provider = "GroqCloud" if api_key.startswith("gsk_") else api_provider
+                requested_model = grok_model.strip()
+                groq_model = (
+                    requested_model
+                    if requested_model and "/" in requested_model and not requested_model.startswith("grok-")
+                    else "meta-llama/llama-4-scout-17b-16e-instruct"
+                )
                 try:
-                    if api_provider == "GroqCloud":
+                    if effective_provider == "GroqCloud":
                         result = analyze_product_image_with_groq(
                             image_bytes,
-                            api_key=grok_api_key.strip(),
-                            model=grok_model.strip() or "meta-llama/llama-4-scout-17b-16e-instruct",
+                            api_key=api_key,
+                            model=groq_model,
                             filename=uploaded.name,
                         )
                     else:
                         result = analyze_product_image_with_grok(
                             image_bytes,
-                            api_key=grok_api_key.strip(),
+                            api_key=api_key,
                             model=grok_model.strip() or "grok-4.5",
                             filename=uploaded.name,
                         )
@@ -280,7 +293,7 @@ with tabs[0]:
             if use_grok and not grok_api_key.strip():
                 st.info(f"API upload analysis is enabled, but no {api_key_label} was provided.")
             dominant_color = getattr(result, "dominant_color", "API analyzed")
-            source_label = api_provider if use_grok and grok_api_key.strip() and not grok_error else "Local fallback"
+            source_label = effective_provider if use_grok and grok_api_key.strip() and not grok_error else "Local fallback"
             st.caption(f"Source: {source_label} | Dominant color: {dominant_color} | Inference latency: {elapsed_ms:.0f} ms")
         else:
             st.info("Upload an image to see category, type, description, color, and latency.")
