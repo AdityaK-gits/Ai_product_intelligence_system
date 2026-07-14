@@ -11,7 +11,7 @@ The app includes:
 
 - Drag-and-drop product image upload
 - Real-time category, product type, dominant color, confidence, and description
-- Optional Grok/xAI vision analysis for more accurate uploaded-image descriptions
+- Optional GroqCloud or xAI Grok vision analysis for more accurate uploaded-image descriptions
 - Search with category filtering and a visual product gallery
 - Catalog visualization dashboard with compression and distribution charts
 - Performance metric cards for inference speed, compression accuracy, and time savings
@@ -29,13 +29,27 @@ For the original Kaggle fashion dataset workflow, choose **Custom dataset** in t
 
 No external API keys are required for local/demo mode.
 
-For higher-quality uploaded-image descriptions, enable **Use Grok for uploads** and provide an xAI API key. On Streamlit Cloud, add this secret:
+For higher-quality uploaded-image descriptions, enable **Use API for uploads** and choose a provider.
+
+For a GroqCloud key that starts with `gsk_`, add this Streamlit Cloud secret:
+
+```toml
+GROQ_API_KEY = "your_groqcloud_api_key"
+```
+
+Use the default GroqCloud model:
+
+```text
+meta-llama/llama-4-scout-17b-16e-instruct
+```
+
+For an xAI/Grok key from `console.x.ai`, add this secret instead:
 
 ```toml
 XAI_API_KEY = "your_xai_api_key"
 ```
 
-When Grok upload analysis is enabled, the uploaded image is sent to `https://api.x.ai/v1/responses` for image understanding. Keep it disabled when you do not want uploaded images sent to an external API.
+When API upload analysis is enabled, the uploaded image is sent to the selected external provider. Keep it disabled when you do not want uploaded images sent to an external API.
 
 The CLIP + BLIP toggle uses local Hugging Face model weights through `torch` and `transformers`. The app intentionally checks the local cache only so Streamlit does not appear frozen while downloading large model files.
 

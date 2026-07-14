@@ -9,7 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 from product_intelligence import ProductIntelligenceEngine, build_demo_catalog
-from product_intelligence.grok_client import analyze_product_image_with_grok
+from product_intelligence.grok_client import analyze_product_image_with_grok, analyze_product_image_with_groq
 
 
 st.set_page_config(page_title="AI Product Intelligence", page_icon="PI", layout="wide")
@@ -172,17 +172,30 @@ with st.sidebar:
     st.divider()
     st.subheader("API Analysis")
     use_grok = st.toggle(
-        "Use Grok for uploads",
+        "Use API for uploads",
         value=False,
-        help="Optional. Sends uploaded images to xAI for more accurate descriptions and labels.",
+        help="Optional. Sends uploaded images to the selected vision API for better descriptions and labels.",
     )
-    grok_model = st.text_input("Grok model", value="grok-4.5", disabled=not use_grok)
+    api_provider = st.selectbox(
+        "Vision API provider",
+        ["GroqCloud", "xAI Grok"],
+        disabled=not use_grok,
+        help="Use GroqCloud for gsk_ keys. Use xAI Grok for xAI console keys.",
+    )
+    default_model = (
+        "meta-llama/llama-4-scout-17b-16e-instruct"
+        if api_provider == "GroqCloud"
+        else "grok-4.5"
+    )
+    secret_name = "GROQ_API_KEY" if api_provider == "GroqCloud" else "XAI_API_KEY"
+    api_key_label = "GroqCloud API key" if api_provider == "GroqCloud" else "xAI API key"
+    grok_model = st.text_input("Vision model", value=default_model, disabled=not use_grok)
     grok_api_key = st.text_input(
-        "xAI API key",
-        value=get_secret("XAI_API_KEY"),
+        api_key_label,
+        value=get_secret(secret_name),
         type="password",
         disabled=not use_grok,
-        help="For Streamlit Cloud, set XAI_API_KEY in app secrets instead of typing it each run.",
+        help=f"For Streamlit Cloud, set {secret_name} in app secrets instead of typing it each run.",
     )
 
 with st.spinner("Preparing catalog and model features..."):
@@ -236,12 +249,20 @@ with tabs[0]:
             grok_error = None
             if use_grok and grok_api_key.strip():
                 try:
-                    result = analyze_product_image_with_grok(
-                        image_bytes,
-                        api_key=grok_api_key.strip(),
-                        model=grok_model.strip() or "grok-4.5",
-                        filename=uploaded.name,
-                    )
+                    if api_provider == "GroqCloud":
+                        result = analyze_product_image_with_groq(
+                            image_bytes,
+                            api_key=grok_api_key.strip(),
+                            model=grok_model.strip() or "meta-llama/llama-4-scout-17b-16e-instruct",
+                            filename=uploaded.name,
+                        )
+                    else:
+                        result = analyze_product_image_with_grok(
+                            image_bytes,
+                            api_key=grok_api_key.strip(),
+                            model=grok_model.strip() or "grok-4.5",
+                            filename=uploaded.name,
+                        )
                 except Exception as exc:
                     grok_error = str(exc)
                     result = engine.analyze_upload(image_bytes)
@@ -255,11 +276,11 @@ with tabs[0]:
             cols[3].metric("Confidence", f"{result.confidence:.2f}")
             st.write(result.description)
             if grok_error:
-                st.warning(f"Grok analysis failed, so local fallback was used. {grok_error}")
+                st.warning(f"{api_provider} analysis failed, so local fallback was used. {grok_error}")
             if use_grok and not grok_api_key.strip():
-                st.info("Grok upload analysis is enabled, but no xAI API key was provided.")
+                st.info(f"API upload analysis is enabled, but no {api_key_label} was provided.")
             dominant_color = getattr(result, "dominant_color", "API analyzed")
-            source_label = "Grok API" if use_grok and grok_api_key.strip() and not grok_error else "Local fallback"
+            source_label = api_provider if use_grok and grok_api_key.strip() and not grok_error else "Local fallback"
             st.caption(f"Source: {source_label} | Dominant color: {dominant_color} | Inference latency: {elapsed_ms:.0f} ms")
         else:
             st.info("Upload an image to see category, type, description, color, and latency.")
