@@ -9,11 +9,6 @@ import plotly.express as px
 import streamlit as st
 
 from product_intelligence import ProductIntelligenceEngine, build_demo_catalog
-from product_intelligence.grok_client import (
-    analyze_product_image_with_gemini,
-    analyze_product_image_with_grok,
-    analyze_product_image_with_groq,
-)
 
 
 st.set_page_config(page_title="AI Product Intelligence", page_icon="PI", layout="wide")
@@ -278,6 +273,8 @@ with tabs[0]:
                 )
                 try:
                     if effective_provider == "Gemini":
+                        from product_intelligence.grok_client import analyze_product_image_with_gemini
+
                         result = analyze_product_image_with_gemini(
                             image_bytes,
                             api_key=api_key,
@@ -285,6 +282,8 @@ with tabs[0]:
                             filename=uploaded.name,
                         )
                     elif effective_provider == "GroqCloud":
+                        from product_intelligence.grok_client import analyze_product_image_with_groq
+
                         result = analyze_product_image_with_groq(
                             image_bytes,
                             api_key=api_key,
@@ -292,6 +291,8 @@ with tabs[0]:
                             filename=uploaded.name,
                         )
                     else:
+                        from product_intelligence.grok_client import analyze_product_image_with_grok
+
                         result = analyze_product_image_with_grok(
                             image_bytes,
                             api_key=api_key,
