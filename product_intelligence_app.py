@@ -165,10 +165,12 @@ with st.spinner("Preparing catalog and model features..."):
     engine = load_engine(use_models, source, styles_csv, image_dir, int(row_limit))
 
 with st.sidebar:
-    if use_models and not engine.model_available:
+    model_available = bool(getattr(engine, "model_available", False))
+    model_message = getattr(engine, "model_message", "Using fast local fallback features.")
+    if use_models and not model_available:
         st.warning("CLIP/BLIP weights are not cached locally, so the app is using the fast fallback.")
     else:
-        st.caption(engine.model_message)
+        st.caption(model_message)
 
 if source == "Custom dataset" and (not styles_csv or not image_dir or engine.catalog.equals(build_demo_catalog())):
     st.warning("Custom dataset paths are missing or invalid, so the app is showing the bundled demo catalog.")
