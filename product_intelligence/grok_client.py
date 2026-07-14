@@ -238,7 +238,7 @@ def analyze_product_image_with_gemini(
         except urllib.error.HTTPError as exc:
             message = exc.read().decode("utf-8", errors="replace")
             errors.append(f"{candidate_model}: HTTP {exc.code}: {message}")
-            if exc.code not in (400, 404):
+            if exc.code not in (400, 404, 429, 500, 502, 503, 504):
                 break
         except urllib.error.URLError as exc:
             errors.append(f"{candidate_model}: {exc.reason}")
