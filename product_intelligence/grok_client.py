@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import time
 from io import BytesIO
 from urllib.parse import quote
 import urllib.error
@@ -52,6 +53,9 @@ def _compressed_jpeg_base64(image_bytes: bytes, *, max_size: int = 1024, quality
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
 def analyze_product_image_with_grok(
@@ -192,7 +196,8 @@ def analyze_product_image_with_gemini(
     api_key: str,
     model: str = "gemini-3.5-flash",
     filename: str = "product.jpg",
-    timeout_seconds: int = 25,
+    timeout_seconds: int = 20,
+    max_retries: int = 3,
 ) -> GrokVisionResult:
     encoded = _compressed_jpeg_base64(image_bytes)
     prompt = (
@@ -216,32 +221,50 @@ def analyze_product_image_with_gemini(
             "response_mime_type": "application/json",
         }
     }
-    candidates = [model, "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    candidates = [
+        model,
+        "gemini-3.5-flash",
+        "gemini-3.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash",
+    ]
     models_to_try = list(dict.fromkeys(candidate for candidate in candidates if candidate))
     errors = []
     payload = None
     selected_model = None
     for candidate_model in models_to_try:
-        request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{quote(candidate_model, safe='')}:generateContent?key={quote(api_key, safe='')}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            selected_model = candidate_model
-            break
-        except urllib.error.HTTPError as exc:
-            message = exc.read().decode("utf-8", errors="replace")
-            errors.append(f"{candidate_model}: HTTP {exc.code}: {message}")
-            if exc.code not in (400, 404, 429, 500, 502, 503, 504):
+        delay = 1
+        for attempt in range(max_retries):
+            request = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{quote(candidate_model, safe='')}:generateContent?key={quote(api_key, safe='')}",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                selected_model = candidate_model
                 break
-        except urllib.error.URLError as exc:
-            errors.append(f"{candidate_model}: {exc.reason}")
+            except urllib.error.HTTPError as exc:
+                message = exc.read().decode("utf-8", errors="replace")
+                errors.append(f"{candidate_model} attempt {attempt + 1}: HTTP {exc.code}: {message}")
+                if exc.code in (400, 404):
+                    break
+                if exc.code not in TRANSIENT_HTTP_CODES:
+                    raise RuntimeError(f"Gemini API request failed with HTTP {exc.code}: {message}") from exc
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
+            except urllib.error.URLError as exc:
+                errors.append(f"{candidate_model} attempt {attempt + 1}: {exc.reason}")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
+        if payload is not None:
             break
     if payload is None:
         raise RuntimeError("Gemini API request failed for all model candidates. " + " | ".join(errors))

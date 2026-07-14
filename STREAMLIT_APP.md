@@ -43,7 +43,7 @@ Use the default Gemini model:
 gemini-3.5-flash
 ```
 
-If that model is not available to your key, the app also tries `gemini-2.5-flash` and `gemini-2.5-flash-lite`.
+If that model is unavailable or temporarily overloaded, the app retries transient Gemini errors with exponential backoff and then tries `gemini-3.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, and `gemini-1.5-flash` before falling back locally.
 
 For a GroqCloud key that starts with `gsk_`, add this Streamlit Cloud secret:
 
