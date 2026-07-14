@@ -190,7 +190,7 @@ def analyze_product_image_with_gemini(
     image_bytes: bytes,
     *,
     api_key: str,
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-3.5-flash",
     filename: str = "product.jpg",
     timeout_seconds: int = 25,
 ) -> GrokVisionResult:
@@ -216,22 +216,35 @@ def analyze_product_image_with_gemini(
             "response_mime_type": "application/json",
         }
     }
-    request = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{quote(model, safe='')}:generateContent?key={quote(api_key, safe='')}",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        message = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Gemini API request failed with HTTP {exc.code}: {message}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
+    candidates = [model, "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    models_to_try = list(dict.fromkeys(candidate for candidate in candidates if candidate))
+    errors = []
+    payload = None
+    selected_model = None
+    for candidate_model in models_to_try:
+        request = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{quote(candidate_model, safe='')}:generateContent?key={quote(api_key, safe='')}",
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            selected_model = candidate_model
+            break
+        except urllib.error.HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="replace")
+            errors.append(f"{candidate_model}: HTTP {exc.code}: {message}")
+            if exc.code not in (400, 404):
+                break
+        except urllib.error.URLError as exc:
+            errors.append(f"{candidate_model}: {exc.reason}")
+            break
+    if payload is None:
+        raise RuntimeError("Gemini API request failed for all model candidates. " + " | ".join(errors))
 
     text = ""
     for candidate in payload.get("candidates", []):
@@ -244,10 +257,13 @@ def analyze_product_image_with_gemini(
     if not text:
         raise RuntimeError("Gemini API returned no text output.")
     parsed = _json_from_text(text)
+    description = str(parsed.get("description", text))
+    if selected_model:
+        description = f"{description} (Gemini model: {selected_model})"
     return GrokVisionResult(
         category=str(parsed.get("category", "Unknown")),
         subcategory=str(parsed.get("subcategory", "Unknown")),
         article_type=str(parsed.get("article_type", "Unknown")),
-        description=str(parsed.get("description", text)),
+        description=description,
         confidence=float(parsed.get("confidence", 0.0)),
     )

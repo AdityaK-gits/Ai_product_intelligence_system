@@ -40,8 +40,10 @@ GEMINI_API_KEY = "your_gemini_api_key"
 Use the default Gemini model:
 
 ```text
-gemini-1.5-flash
+gemini-3.5-flash
 ```
+
+If that model is not available to your key, the app also tries `gemini-2.5-flash` and `gemini-2.5-flash-lite`.
 
 For a GroqCloud key that starts with `gsk_`, add this Streamlit Cloud secret:
 
