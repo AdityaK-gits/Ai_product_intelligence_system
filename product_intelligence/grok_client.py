@@ -172,3 +172,74 @@ def analyze_product_image_with_groq(
         description=str(parsed.get("description", text)),
         confidence=float(parsed.get("confidence", 0.0)),
     )
+
+
+def analyze_product_image_with_gemini(
+    image_bytes: bytes,
+    *,
+    api_key: str,
+    model: str = "gemini-3.5-flash",
+    filename: str = "product.jpg",
+    timeout_seconds: int = 60,
+) -> GrokVisionResult:
+    mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    prompt = (
+        "Analyze this uploaded image for an ecommerce product intelligence UI. "
+        "If the image is not actually a product photo, say what it is instead. "
+        "Return only valid JSON with keys category, subcategory, article_type, "
+        "description, and confidence. Description should be one concise sentence "
+        "grounded only in visible image details. Confidence must be a number from 0 to 1."
+    )
+    body = {
+        "model": model,
+        "input": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image",
+                "data": encoded,
+                "mime_type": mime_type,
+            },
+        ],
+        "response_format": {
+            "type": "text",
+            "mime_type": "application/json",
+        },
+    }
+    request = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini API request failed with HTTP {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
+
+    text = payload.get("output_text", "")
+    if not text:
+        for item in payload.get("output", []):
+            for content in item.get("content", []):
+                if isinstance(content.get("text"), str):
+                    text = content["text"]
+                    break
+            if text:
+                break
+    if not text:
+        raise RuntimeError("Gemini API returned no text output.")
+    parsed = _json_from_text(text)
+    return GrokVisionResult(
+        category=str(parsed.get("category", "Unknown")),
+        subcategory=str(parsed.get("subcategory", "Unknown")),
+        article_type=str(parsed.get("article_type", "Unknown")),
+        description=str(parsed.get("description", text)),
+        confidence=float(parsed.get("confidence", 0.0)),
+    )

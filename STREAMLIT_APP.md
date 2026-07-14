@@ -11,7 +11,7 @@ The app includes:
 
 - Drag-and-drop product image upload
 - Real-time category, product type, dominant color, confidence, and description
-- Optional GroqCloud or xAI Grok vision analysis for more accurate uploaded-image descriptions
+- Optional Gemini, GroqCloud, or xAI Grok vision analysis for more accurate uploaded-image descriptions
 - Search with category filtering and a visual product gallery
 - Catalog visualization dashboard with compression and distribution charts
 - Performance metric cards for inference speed, compression accuracy, and time savings
@@ -30,6 +30,18 @@ For the original Kaggle fashion dataset workflow, choose **Custom dataset** in t
 No external API keys are required for local/demo mode.
 
 For higher-quality uploaded-image descriptions, enable **Use API for uploads** and choose a provider.
+
+For a Google AI Studio Gemini key, add this Streamlit Cloud secret:
+
+```toml
+GEMINI_API_KEY = "your_gemini_api_key"
+```
+
+Use the default Gemini model:
+
+```text
+gemini-3.5-flash
+```
 
 For a GroqCloud key that starts with `gsk_`, add this Streamlit Cloud secret:
 

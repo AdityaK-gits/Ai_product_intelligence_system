@@ -9,7 +9,11 @@ import plotly.express as px
 import streamlit as st
 
 from product_intelligence import ProductIntelligenceEngine, build_demo_catalog
-from product_intelligence.grok_client import analyze_product_image_with_grok, analyze_product_image_with_groq
+from product_intelligence.grok_client import (
+    analyze_product_image_with_gemini,
+    analyze_product_image_with_grok,
+    analyze_product_image_with_groq,
+)
 
 
 st.set_page_config(page_title="AI Product Intelligence", page_icon="PI", layout="wide")
@@ -178,17 +182,16 @@ with st.sidebar:
     )
     api_provider = st.selectbox(
         "Vision API provider",
-        ["GroqCloud", "xAI Grok"],
+        ["Gemini", "GroqCloud", "xAI Grok"],
         disabled=not use_grok,
-        help="Use GroqCloud for gsk_ keys. Use xAI Grok for xAI console keys.",
+        help="Use Gemini for Google AI Studio keys, GroqCloud for gsk_ keys, and xAI Grok for xAI console keys.",
     )
-    default_model = (
-        "meta-llama/llama-4-scout-17b-16e-instruct"
-        if api_provider == "GroqCloud"
-        else "grok-4.5"
-    )
-    secret_name = "GROQ_API_KEY" if api_provider == "GroqCloud" else "XAI_API_KEY"
-    api_key_label = "GroqCloud API key" if api_provider == "GroqCloud" else "xAI API key"
+    provider_defaults = {
+        "Gemini": ("GEMINI_API_KEY", "Gemini API key", "gemini-3.5-flash"),
+        "GroqCloud": ("GROQ_API_KEY", "GroqCloud API key", "meta-llama/llama-4-scout-17b-16e-instruct"),
+        "xAI Grok": ("XAI_API_KEY", "xAI API key", "grok-4.5"),
+    }
+    secret_name, api_key_label, default_model = provider_defaults[api_provider]
     grok_model = st.text_input("Vision model", value=default_model, disabled=not use_grok)
     grok_api_key = st.text_input(
         api_key_label,
@@ -199,6 +202,8 @@ with st.sidebar:
     )
     if use_grok and grok_api_key.strip().startswith("gsk_") and api_provider != "GroqCloud":
         st.warning("This looks like a GroqCloud key. The app will route it to GroqCloud automatically.")
+    if use_grok and grok_api_key.strip().startswith("AIza") and api_provider != "Gemini":
+        st.warning("This looks like a Gemini key. The app will route it to Gemini automatically.")
     if use_grok and api_provider == "GroqCloud" and grok_model.strip().startswith("grok-"):
         st.warning("GroqCloud does not use grok-* model names. The app will use the GroqCloud vision model automatically.")
 
@@ -254,15 +259,32 @@ with tabs[0]:
             effective_provider = api_provider
             if use_grok and grok_api_key.strip():
                 api_key = grok_api_key.strip()
-                effective_provider = "GroqCloud" if api_key.startswith("gsk_") else api_provider
+                if api_key.startswith("gsk_"):
+                    effective_provider = "GroqCloud"
+                elif api_key.startswith("AIza"):
+                    effective_provider = "Gemini"
+                else:
+                    effective_provider = api_provider
                 requested_model = grok_model.strip()
                 groq_model = (
                     requested_model
                     if requested_model and "/" in requested_model and not requested_model.startswith("grok-")
                     else "meta-llama/llama-4-scout-17b-16e-instruct"
                 )
+                gemini_model = (
+                    requested_model
+                    if requested_model and requested_model.startswith("gemini-")
+                    else "gemini-3.5-flash"
+                )
                 try:
-                    if effective_provider == "GroqCloud":
+                    if effective_provider == "Gemini":
+                        result = analyze_product_image_with_gemini(
+                            image_bytes,
+                            api_key=api_key,
+                            model=gemini_model,
+                            filename=uploaded.name,
+                        )
+                    elif effective_provider == "GroqCloud":
                         result = analyze_product_image_with_groq(
                             image_bytes,
                             api_key=api_key,
