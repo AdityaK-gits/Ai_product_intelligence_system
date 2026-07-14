@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -8,9 +9,17 @@ import plotly.express as px
 import streamlit as st
 
 from product_intelligence import ProductIntelligenceEngine, build_demo_catalog
+from product_intelligence.grok_client import analyze_product_image_with_grok
 
 
 st.set_page_config(page_title="AI Product Intelligence", page_icon="PI", layout="wide")
+
+
+def get_secret(name: str, default: str = "") -> str:
+    try:
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return os.getenv(name, default)
 
 st.markdown(
     """
@@ -160,6 +169,21 @@ with st.sidebar:
     top_k = st.slider("Search results", min_value=4, max_value=16, value=8, step=4)
     cluster_count = st.slider("Representative catalog size", min_value=3, max_value=10, value=5)
     st.caption("Custom mode expects the notebook dataset structure: styles.csv and an images directory of product jpgs.")
+    st.divider()
+    st.subheader("API Analysis")
+    use_grok = st.toggle(
+        "Use Grok for uploads",
+        value=False,
+        help="Optional. Sends uploaded images to xAI for more accurate descriptions and labels.",
+    )
+    grok_model = st.text_input("Grok model", value="grok-4.5", disabled=not use_grok)
+    grok_api_key = st.text_input(
+        "xAI API key",
+        value=get_secret("XAI_API_KEY"),
+        type="password",
+        disabled=not use_grok,
+        help="For Streamlit Cloud, set XAI_API_KEY in app secrets instead of typing it each run.",
+    )
 
 with st.spinner("Preparing catalog and model features..."):
     engine = load_engine(use_models, source, styles_csv, image_dir, int(row_limit))
@@ -209,7 +233,20 @@ with tabs[0]:
         st.subheader("Real-Time Product Intelligence")
         if uploaded:
             start = time.perf_counter()
-            result = engine.analyze_upload(image_bytes)
+            grok_error = None
+            if use_grok and grok_api_key.strip():
+                try:
+                    result = analyze_product_image_with_grok(
+                        image_bytes,
+                        api_key=grok_api_key.strip(),
+                        model=grok_model.strip() or "grok-4.5",
+                        filename=uploaded.name,
+                    )
+                except Exception as exc:
+                    grok_error = str(exc)
+                    result = engine.analyze_upload(image_bytes)
+            else:
+                result = engine.analyze_upload(image_bytes)
             elapsed_ms = (time.perf_counter() - start) * 1000
             cols = st.columns(4)
             cols[0].metric("Category", result.category)
@@ -217,7 +254,13 @@ with tabs[0]:
             cols[2].metric("Type", result.article_type)
             cols[3].metric("Confidence", f"{result.confidence:.2f}")
             st.write(result.description)
-            st.caption(f"Dominant color: {result.dominant_color} | Inference latency: {elapsed_ms:.0f} ms")
+            if grok_error:
+                st.warning(f"Grok analysis failed, so local fallback was used. {grok_error}")
+            if use_grok and not grok_api_key.strip():
+                st.info("Grok upload analysis is enabled, but no xAI API key was provided.")
+            dominant_color = getattr(result, "dominant_color", "API analyzed")
+            source_label = "Grok API" if use_grok and grok_api_key.strip() and not grok_error else "Local fallback"
+            st.caption(f"Source: {source_label} | Dominant color: {dominant_color} | Inference latency: {elapsed_ms:.0f} ms")
         else:
             st.info("Upload an image to see category, type, description, color, and latency.")
 

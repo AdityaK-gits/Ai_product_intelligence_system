@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import base64
+import json
+import mimetypes
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class GrokVisionResult:
+    category: str
+    subcategory: str
+    article_type: str
+    description: str
+    confidence: float
+
+
+def _extract_text(response_payload: dict) -> str:
+    if isinstance(response_payload.get("output_text"), str):
+        return response_payload["output_text"]
+    chunks: list[str] = []
+    for item in response_payload.get("output", []):
+        for content in item.get("content", []):
+            text = content.get("text") or content.get("output_text")
+            if isinstance(text, str):
+                chunks.append(text)
+    return "\n".join(chunks).strip()
+
+
+def _json_from_text(text: str) -> dict:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        cleaned = cleaned[start : end + 1]
+    return json.loads(cleaned)
+
+
+def analyze_product_image_with_grok(
+    image_bytes: bytes,
+    *,
+    api_key: str,
+    model: str = "grok-4.5",
+    filename: str = "product.jpg",
+    timeout_seconds: int = 60,
+) -> GrokVisionResult:
+    mime_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    prompt = (
+        "Analyze this uploaded image for an ecommerce product intelligence UI. "
+        "If the image is not actually a product photo, say what it is instead. "
+        "Return only valid JSON with keys category, subcategory, article_type, "
+        "description, and confidence. Description should be one concise sentence "
+        "grounded only in visible image details. Confidence must be a number from 0 to 1."
+    )
+    body = {
+        "model": model,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{mime_type};base64,{encoded}",
+                        "detail": "high",
+                    },
+                    {"type": "input_text", "text": prompt},
+                ],
+            }
+        ],
+    }
+    request = urllib.request.Request(
+        "https://api.x.ai/v1/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"xAI API request failed with HTTP {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"xAI API request failed: {exc.reason}") from exc
+
+    text = _extract_text(payload)
+    if not text:
+        raise RuntimeError("xAI API returned no text output.")
+    parsed = _json_from_text(text)
+    return GrokVisionResult(
+        category=str(parsed.get("category", "Unknown")),
+        subcategory=str(parsed.get("subcategory", "Unknown")),
+        article_type=str(parsed.get("article_type", "Unknown")),
+        description=str(parsed.get("description", text)),
+        confidence=float(parsed.get("confidence", 0.0)),
+    )
